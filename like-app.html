@@ -1,0 +1,2005 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Лайк / Дизлайк</title>
+<style>
+  * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+
+  html, body { margin: 0; height: 100%; }
+
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: linear-gradient(135deg, #fce4ec 0%, #e3f2fd 50%, #fff3e0 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  /* ===== Экран телефона =====
+     На компьютере — светлая карточка по центру,
+     на телефоне (узкий экран) — на всю страницу. */
+  .phone {
+    width: 100%;
+    height: 100%;
+    max-width: 420px;
+    background: #fafafa;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 48px;
+    position: relative;
+    overflow: hidden;
+    overflow: clip; /* clip — не создаёт прокрутку: экран не уезжает вбок */
+  }
+
+  @media (min-width: 520px) and (min-height: 620px) {
+    .phone {
+      height: min(780px, 92vh);
+      border-radius: 36px;
+      border: 2px solid rgba(0, 0, 0, 0.07);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12), 0 4px 14px rgba(0, 0, 0, 0.08);
+    }
+  }
+
+  /* ===== Карточка фото ===== */
+  .photo-frame {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border: 2px solid rgba(0, 0, 0, 0.07);
+    border-radius: 20px;
+    background: #e0e0e0;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+    position: relative;
+    touch-action: none;          /* тянем карточку пальцем без скролла страницы */
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: grab;
+  }
+
+  /* внутренняя обрезка фото/видео по скруглению карточки —
+     сама карточка не режет содержимое, чтобы табличка
+     с именем могла свисать за её нижний край */
+  .photo-clip {
+    position: absolute;
+    inset: 0;
+    border-radius: 18px;
+    overflow: hidden;
+    background: #e0e0e0;
+  }
+
+  .photo-frame.dragging { cursor: grabbing; }
+
+  .photo-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    pointer-events: none;
+  }
+
+  /* видео-награда поверх фото: доброе — за сердечко,
+     не доброе — за разбитое сердце */
+  #rewardVideo {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+    pointer-events: none;
+    background: #111;
+  }
+
+  #rewardVideo.showing { opacity: 1; }
+
+  /* ===== Кнопка «СКИП» =====
+     Выплывает над карточкой, пока играет видео-награда:
+     нажатие мгновенно обрывает видео и листает дальше. */
+  .card-zone {
+    position: relative;
+    width: 76%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  #skipBtn {
+    position: absolute;
+    bottom: calc(100% + 16px);
+    left: 50%;
+    width: 58%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 9px 0 8px;
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    text-indent: 4px; /* компенсирует сдвиг от letter-spacing — текст ровно по центру */
+    color: #5c5c63;
+    background: rgba(130, 130, 137, 0.16);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 12px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, 8px) scale(0.96);
+    transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.22, 1.4, 0.36, 1);
+    z-index: 5;
+    touch-action: manipulation;
+  }
+
+  /* видео играет уже 2 секунды — кнопка тихо проступает над карточкой */
+  #skipBtn.show {
+    opacity: 0.88;
+    pointer-events: auto;
+    transform: translate(-50%, 0) scale(1);
+  }
+
+  #skipBtn:hover {
+    background: rgba(130, 130, 137, 0.30);
+    transform: translate(-50%, -1px) scale(1.03);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.10);
+  }
+
+  #skipBtn:active {
+    background: rgba(115, 115, 122, 0.35);
+    transform: translate(-50%, 0) scale(0.95);
+    transition-duration: 0.1s;
+  }
+
+  #skipBtn .skip-ico {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    color: #6b6b73;
+  }
+
+  /* Белая табличка с фамилией — висит на нижнем крае карточки:
+     наполовину на фото, наполовину свисает наружу */
+  .name-plate {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    transform: translate(-50%, 50%);
+    width: 70%;
+    background: #ffffff;
+    border: 2px solid rgba(0, 0, 0, 0.07);
+    border-radius: 12px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.14);
+    padding: 9px 10px;
+    text-align: center;
+    font-size: 19px;
+    font-weight: 600;
+    color: #222;
+    z-index: 3;
+  }
+
+  /* ===== Заглушка «карточки закончились» удалена:
+     колода теперь бесконечная ===== */
+
+  .photo-frame.gone { display: none; }
+  [hidden] { display: none !important; }
+
+  /* ===== Правый верхний угол: таймер голосования и сброс ===== */
+  .top-right {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 15; /* над основным экраном, но под страницами настроек и рейтинга */
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+  }
+
+  /* таймер-часы без рамки и текста: просто иконка —
+     зелёная, когда опыт зачитывается, жёлтая, когда идёт отсчёт 24 часов */
+  #voteTimer {
+    display: flex;
+    position: relative;
+    z-index: 6; /* часы поверх подсказки — видны и кликабельны всегда */
+    border: none;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    transition: color 0.2s ease, transform 0.15s ease;
+  }
+
+  #voteTimer svg {
+    width: 26px;
+    height: 26px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.14));
+  }
+
+  #voteTimer:hover { transform: scale(1.1); }
+  #voteTimer:active { transform: scale(0.9); }
+
+  /* синий значок скрыт крестиком до начала нового цикла */
+  #voteTimer.gone { display: none; }
+
+  /* зелёный значок «!» — опыт зачитывается;
+     жёлтые часы — показываются только во время отсчёта */
+  /* значки по состояниям: синий «!» — первый цикл; жёлтые часы — отсчёт;
+     зелёные часы — новый цикл, снова можно голосовать */
+  #voteTimer .ico-hint,
+  #voteTimer .ico-clock,
+  #voteTimer .ico-green { display: none; }
+
+  #voteTimer.free .ico-hint {
+    display: block;
+    animation: hintBounce 2.2s cubic-bezier(0.36, 0.04, 0.32, 1) infinite;
+    transform-origin: center bottom;
+  }
+
+  #voteTimer.green .ico-green { display: block; }
+  #voteTimer.active .ico-clock { display: block; }
+
+  #voteTimer.free { color: #2e9e44; }
+  #voteTimer.green { color: #2ecc40; }
+  #voteTimer.active { color: #e8b30c; }
+
+  /* радостное подпрыгивание — «нажми на меня» */
+  @keyframes hintBounce {
+    0%, 72%, 100% { transform: translateY(0) scale(1, 1); }
+    12%           { transform: translateY(0) scale(1.06, 0.88); }   /* приседание */
+    38%           { transform: translateY(-9px) scale(0.96, 1.06); } /* прыжок */
+    58%           { transform: translateY(0) scale(1.04, 0.94); }   /* приземление */
+  }
+
+  #resetSession {
+    border: 1.5px solid rgba(0, 0, 0, 0.09);
+    background: #ffffff;
+    color: #8a8a90;
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 6px 11px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.15s ease;
+  }
+
+  #resetSession:hover { background: #f4f4f6; }
+  #resetSession:active { transform: scale(0.94); }
+
+  /* подсказка по клику на часы: верх — вровень с часами, свисает
+     влево-вниз и может перекрывать кнопку «Сброс» (она временная).
+     Компактная — чтобы не наезжала на кнопку «СКИП» на карточке */
+  /* подсказка по клику на часы: прижата 1-в-1 к правому верхнему
+     углу телефона; справа — запас под жёлтые часы, лежащие поверх
+     угла, чтобы текст никогда не залезал на значок */
+  .timer-popup {
+    position: absolute;
+    top: -12px;
+    right: -12px;
+    z-index: 5;
+    width: 180px;
+    background: #ffffff;
+    border: 1.5px solid rgba(0, 0, 0, 0.09);
+    border-radius: 0 0 0 14px;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16);
+    padding: 10px 28px 10px 30px;
+  }
+
+  .tp-text {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.4;
+    color: #777;
+  }
+
+  /* серый крестик закрытия — внутри подсказки, слева от текста */
+  /* серый крестик закрытия — в левом верхнем углу подсказки,
+     левее синего значка (значок лежит поверх угла подсказки) */
+  .tp-close {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: #ececf0;
+    color: #8a8a90;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .tp-close:hover { background: #dcdce1; color: #55555c; }
+
+  /* обратный отсчёт внутри подсказки */
+  .tp-timer {
+    margin-top: 4px;
+    font-size: 16px;
+    font-weight: 800;
+    color: #b0680e;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    letter-spacing: 0.5px;
+  }
+
+  /* ===== Анимации карточки =====
+     Появление: вырастает из центра с «подпрыгом».
+     Смена после видео: старая сдувается, новая вырастает на её месте. */
+  .pop-in     { animation: popIn 0.5s cubic-bezier(0.22, 1.4, 0.36, 1); }
+  .shrink-out { animation: shrinkOut 0.4s cubic-bezier(0.55, 0, 0.85, 0.36) forwards; }
+
+  /* смена карточки после видео: старая сдувается, новая вырастает на её месте */
+  @keyframes shrinkOut {
+    from { transform: scale(1);   opacity: 1; }
+    to   { transform: scale(0.4); opacity: 0; }
+  }
+
+  @keyframes popIn {
+    0%   { transform: scale(0.4); opacity: 0; }
+    60%  { transform: scale(1.05); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* ===== Кнопки-сердца (без фона-кружочка) ===== */
+  .buttons {
+    display: flex;
+    align-items: center;
+    gap: 56px;
+  }
+
+  .buttons button {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition: transform 0.18s ease;
+  }
+
+  .buttons button:hover  { transform: translateY(-3px) scale(1.06); }
+  .buttons button:active { transform: scale(0.9); }
+
+  /* пружинистый «прыжок» при нажатии */
+  .pop { animation: pop 0.4s ease; }
+
+  @keyframes pop {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.25); }
+    70%  { transform: scale(0.92); }
+    100% { transform: scale(1); }
+  }
+
+  /* --- Красное сердце с частицами --- */
+  #like {
+    position: relative;
+    width: 96px;
+    height: 96px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #like > svg {
+    position: relative;
+    z-index: 2;
+    filter: drop-shadow(0 5px 10px rgba(224, 69, 126, 0.35));
+    animation: beat 1.9s ease-in-out infinite;
+  }
+
+  @keyframes beat {
+    0%, 48%, 100% { transform: scale(1); }
+    12% { transform: scale(1.09); }
+    24% { transform: scale(1); }
+    36% { transform: scale(1.06); }
+  }
+
+  /* --- Кнопка рейтинга: подиум 3-2-1 (внизу, под линией) --- */
+  .divider {
+    width: 72%;
+    height: 1px;
+    background: #e3e3e3;
+  }
+
+  #rating {
+    position: relative;
+    width: 84px;
+    height: 78px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: -22px; /* чуть выше сердец */
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition: transform 0.18s ease;
+  }
+
+  #rating:focus, .buttons button:focus { outline: none; }
+
+  #rating:hover  { transform: translateY(-3px) scale(1.06); }
+  #rating:active { transform: scale(0.9); }
+
+  #rating .podium {
+    width: 74px;
+    height: 74px;
+    filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.18));
+    /* подиум плавно «дышит» */
+    animation: podiumFloat 3.2s ease-in-out infinite;
+  }
+
+  #rating:hover .podium {
+    filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.24));
+  }
+
+  @keyframes podiumFloat {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-3px); }
+  }
+
+  /* ступеньки по очереди подтягиваются и возвращаются «как желе»:
+     невысокий пружинистый взлёт и мягкое затухающее колыхание */
+  .podium .step {
+    transform-box: fill-box;
+    transform-origin: center bottom;
+    animation: stepStrive1 3.6s infinite; /* базовая, переопределяется ниже */
+  }
+
+  /* у каждой ступеньки своя амплитуда: низкая 3-я тянется сильнее,
+     чтобы подъём был заметен так же, как у высоких */
+  .podium .step-3 { animation-name: stepStrive3; animation-delay: 0s;    }
+  .podium .step-2 { animation-name: stepStrive2; animation-delay: 1.2s; }
+  .podium .step-1 { animation-name: stepStrive1; animation-delay: 2.4s; }
+
+  /* 3-е место — сама низкая, поэтому амплитуда больше */
+  @keyframes stepStrive3 {
+    0% {
+      transform: scale(1, 1);
+      animation-timing-function: cubic-bezier(0.3, 1.35, 0.4, 1);
+    }
+    9%  { transform: scale(0.97, 1.26); }
+    18% { transform: scale(1.025, 0.9); }
+    26% { transform: scale(0.995, 1.06); }
+    34% { transform: scale(1.003, 0.98); }
+    42%, 100% { transform: scale(1, 1); }
+  }
+
+  /* 2-е место — средняя */
+  @keyframes stepStrive2 {
+    0% {
+      transform: scale(1, 1);
+      animation-timing-function: cubic-bezier(0.3, 1.35, 0.4, 1);
+    }
+    9%  { transform: scale(0.985, 1.15); }
+    18% { transform: scale(1.015, 0.965); }
+    26% { transform: scale(0.997, 1.03); }
+    34% { transform: scale(1.001, 0.99); }
+    42%, 100% { transform: scale(1, 1); }
+  }
+
+  /* 1-е место — высокая, хватает лёгкого движения */
+  @keyframes stepStrive1 {
+    0% {
+      transform: scale(1, 1);
+      animation-timing-function: cubic-bezier(0.3, 1.35, 0.4, 1);
+    }
+    9%  { transform: scale(0.99, 1.1); }
+    18% { transform: scale(1.01, 0.965); }
+    26% { transform: scale(0.998, 1.028); }
+    34% { transform: scale(1.001, 0.99); }
+    42%, 100% { transform: scale(1, 1); }
+  }
+
+  .particle-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* --- Разбитое сердце: половинки --- */
+  #dislike {
+    position: relative;
+    width: 96px;
+    height: 84px;
+  }
+
+  #dislike .piece {
+    position: absolute;
+    top: 6px;
+    left: 12px;
+    width: 72px;
+    height: 72px;
+    transition: transform 0.45s cubic-bezier(0.34, 1.2, 0.4, 1);
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.18));
+  }
+
+  #dislike .left {
+    clip-path: polygon(0% 0%, 55% 0%, 45% 18%, 60% 32%, 40% 48%, 58% 63%, 48% 82%, 50% 100%, 0% 100%);
+    transform: translateX(-5px) rotate(-3deg);
+    animation: mendLeft 3.6s ease-in-out 0.8s infinite;
+  }
+
+  #dislike .right {
+    clip-path: polygon(55% 0%, 100% 0%, 100% 100%, 50% 100%, 48% 82%, 58% 63%, 40% 48%, 60% 32%, 45% 18%);
+    transform: translateX(5px) rotate(3deg);
+    animation: mendRight 3.6s ease-in-out 0.8s infinite;
+  }
+
+  /* фоновая «попытка склеиться»: половинки плавно съезжаются,
+     слегка дрожат как будто пытаются срастись, и снова расходятся */
+  @keyframes mendLeft {
+    0%   { transform: translateX(-5px) rotate(-3deg); }
+    32%  { transform: translateX(-1.5px) rotate(-0.8deg); }
+    42%  { transform: translateX(-2.1px) rotate(-1.05deg); }
+    50%  { transform: translateX(-1.2px) rotate(-0.55deg); }
+    58%  { transform: translateX(-2.3px) rotate(-1.15deg); }
+    76%  { transform: translateX(-5px) rotate(-3deg); }
+    100% { transform: translateX(-5px) rotate(-3deg); }
+  }
+
+  @keyframes mendRight {
+    0%   { transform: translateX(5px) rotate(3deg); }
+    32%  { transform: translateX(1.5px) rotate(0.8deg); }
+    42%  { transform: translateX(2.1px) rotate(1.05deg); }
+    50%  { transform: translateX(1.2px) rotate(0.55deg); }
+    58%  { transform: translateX(2.3px) rotate(1.15deg); }
+    76%  { transform: translateX(5px) rotate(3deg); }
+    100% { transform: translateX(5px) rotate(3deg); }
+  }
+
+  /* нажали — анимация перепрыгивает на фазу «сомкнуты» и продолжается,
+     а не начинается с начала (см. mendSnap в скрипте) */
+
+  /* ===== Страница рейтинга (вторая страница) ===== */
+  .page-rating {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    background: #fafafa;
+    border-radius: inherit;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(106%); /* спрятана за правым краем */
+    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    overflow: hidden;
+  }
+
+  .page-rating.open { transform: translateX(0); }
+
+  .rating-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 18px 4px;
+  }
+
+  .back-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: none;
+    background: #f3eaef;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex: none;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+
+  .back-btn:hover  { background: #ecdce6; transform: scale(1.06); }
+  .back-btn:active { transform: scale(0.9); }
+
+  .back-btn svg { width: 22px; height: 22px; }
+
+  .rating-title {
+    font-size: 26px;
+    font-weight: 700;
+    color: #222;
+  }
+
+  .rating-podium-wrap {
+    display: flex;
+    justify-content: center;
+    padding: 0 0 8px;
+  }
+
+  .rating-podium { width: 86px; height: 62px; }
+
+  .rating-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    background: #ffffff;
+    border: 1.5px solid rgba(0, 0, 0, 0.09);
+    border-radius: 14px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+    animation: rowIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(var(--i) * 45ms);
+  }
+
+  @keyframes rowIn {
+    from { opacity: 0; transform: translateX(26px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  .place {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 700;
+    color: #9a9aa0;
+    background: #fff;
+    border: 1.5px solid rgba(0, 0, 0, 0.09);
+    border-radius: 9px;
+    flex: none;
+  }
+
+  .place.p1 { color: #d92b3f; }  /* красное 1-е место  */
+  .place.p2 { color: #2e9fd4; }  /* синее 2-е место    */
+  .place.p3 { color: #e8b30c; }  /* жёлтое 3-е место   */
+
+  /* квадратик с фото (фото из карточки, буква — запасной вариант под ним) */
+  .avatar {
+    position: relative;
+    width: 38px;
+    height: 38px;
+    border: 2px solid #b6b6bb;
+    border-radius: 9px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+  }
+
+  .rname {
+    flex: 1;
+    font-size: 15.5px;
+    font-weight: 600;
+    color: #333;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .score {
+    font-size: 15.5px;
+    font-weight: 700;
+    color: #333;
+    min-width: 40px;
+    padding: 5px 9px;
+    text-align: center;
+    background: #fff;
+    border: 1.5px solid rgba(0, 0, 0, 0.09);
+    border-radius: 9px;
+  }
+
+  /* ===== Кнопка настроек (шестерёнка, левый верхний угол) ===== */
+  #settingsBtn {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 15; /* над основным экраном, но под страницами настроек и рейтинга */
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: none;
+    cursor: pointer;
+    transition: transform 0.15s ease;
+  }
+
+  #settingsBtn svg {
+    width: 24px;
+    height: 24px;
+    fill: #8a8a90;
+    transition: fill 0.15s ease;
+  }
+
+  #settingsBtn:hover svg { fill: #e0457e; }
+  #settingsBtn:active { transform: scale(0.92); }
+
+  /* нажали — шестерёнка крутанулась */
+  #settingsBtn.spinning svg { animation: gearSpin 0.6s cubic-bezier(0.45, 0.05, 0.35, 1); }
+
+  @keyframes gearSpin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(180deg); }
+  }
+
+  /* ===== Страница настроек (выезжает слева направо) ===== */
+  .page-settings {
+    position: absolute;
+    inset: 0;
+    z-index: 25;
+    background: #fafafa;
+    border-radius: inherit;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(-106%); /* спрятана за левым краем */
+    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    overflow: hidden;
+  }
+
+  .page-settings.open { transform: translateX(0); }
+
+  .settings-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* строка настройки: название — ползунок — галочка */
+  .set-block {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #ffffff;
+    border: 1.5px solid rgba(0, 0, 0, 0.10);
+    border-radius: 12px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+    padding: 14px;
+    animation: rowIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(var(--i) * 60ms);
+  }
+
+  .set-name {
+    font-size: 14.5px;
+    font-weight: 600;
+    color: #333;
+    flex: none;
+    width: 132px; /* «Громкость звуков» — самое длинное, влезает в одну строку */
+    white-space: nowrap;
+  }
+
+  /* галочка в квадратике */
+  .check {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    flex: none;
+    border: 1.5px solid #b9b9c0;
+    border-radius: 4px;
+    background: #ffffff;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .check:hover { border-color: #e0457e; }
+
+  .check:checked {
+    background: #e0457e;
+    border-color: #e0457e;
+  }
+
+  .check:checked::after {
+    content: '';
+    width: 10px;
+    height: 5px;
+    border-left: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    transform: rotate(-45deg) translateY(-1px);
+  }
+
+  /* галочку видео прижимаем к правому краю строки */
+  .check.push { margin-left: auto; }
+
+  /* цифра громкости справа от ползунка (10% … 100%) */
+  .vol-num {
+    flex: none;
+    width: 38px;
+    text-align: right;
+    font-size: 13px;
+    font-weight: 700;
+    color: #8a8a90;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* тонкий минималистичный ползунок громкости */
+  .range {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    min-width: 0;
+    height: 3px;
+    border-radius: 999px;
+    background: linear-gradient(to right, #e0457e var(--fill, 50%), #dcdce1 var(--fill, 50%));
+    outline: none;
+    cursor: pointer;
+  }
+
+  .range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #ffffff;
+    border: 1.5px solid #a9a9b2;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  }
+
+  .range::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #ffffff;
+    border: 1.5px solid #a9a9b2;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  }
+
+  .range::-moz-range-track {
+    height: 3px;
+    border-radius: 999px;
+    background: linear-gradient(to right, #e0457e var(--fill, 50%), #dcdce1 var(--fill, 50%));
+  }
+</style>
+</head>
+<body>
+
+  <div class="phone">
+
+    <div class="card-zone">
+
+      <!-- Кнопка «СКИП»: выплывает над карточкой, пока идёт видео-награда —
+           обрывает его и сразу показывает следующую карточку -->
+      <button id="skipBtn" type="button" aria-label="Пропустить видео">
+        <svg class="skip-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" fill="currentColor"/>
+        </svg>
+        <span class="skip-label">СКИП</span>
+        <div class="particle-layer"></div>
+      </button>
+
+      <div class="photo-frame" id="photoFrame">
+        <div class="photo-clip">
+          <img id="photo" src="" alt="фото">
+          <video id="rewardVideo" playsinline preload="auto"></video>
+        </div>
+        <div class="name-plate" id="namePlate">…</div>
+      </div>
+
+    </div>
+
+    <div class="buttons">
+      <!-- Красное сердце: фото уходит влево -->
+      <button id="like" aria-label="Нравится">
+        <svg width="64" height="64" viewBox="0 0 24 24">
+          <path d="M12,21.35l-1.45-1.32C5.4,15.36,2,12.28,2,8.5C2,5.42,4.42,3,7.5,3c1.74,0,3.41,0.81,4.5,2.09C13.09,3.81,14.76,3,16.5,3C19.58,3,22,5.42,22,8.5c0,3.78-3.4,6.86-8.55,11.54L12,21.35z"
+                fill="#e0457e"/>
+        </svg>
+        <div class="particle-layer"></div>
+      </button>
+
+      <!-- Серое разбитое сердце: фото уходит вправо -->
+      <button id="dislike" aria-label="Не нравится">
+        <svg class="piece left" width="72" height="72" viewBox="0 0 24 24">
+          <path d="M12,21.35l-1.45-1.32C5.4,15.36,2,12.28,2,8.5C2,5.42,4.42,3,7.5,3c1.74,0,3.41,0.81,4.5,2.09C13.09,3.81,14.76,3,16.5,3C19.58,3,22,5.42,22,8.5c0,3.78-3.4,6.86-8.55,11.54L12,21.35z"
+                fill="#9b9b9b"/>
+        </svg>
+        <svg class="piece right" width="72" height="72" viewBox="0 0 24 24">
+          <path d="M12,21.35l-1.45-1.32C5.4,15.36,2,12.28,2,8.5C2,5.42,4.42,3,7.5,3c1.74,0,3.41,0.81,4.5,2.09C13.09,3.81,14.76,3,16.5,3C19.58,3,22,5.42,22,8.5c0,3.78-3.4,6.86-8.55,11.54L12,21.35z"
+                fill="#9b9b9b"/>
+        </svg>
+        <div class="particle-layer"></div>
+      </button>
+    </div>
+
+    <!-- Кнопка рейтинга: подиум 3-2-1 (пока ничего не делает) -->
+    <button id="rating" aria-label="Рейтинг">
+      <svg class="podium" viewBox="0 0 24 24">
+        <defs>
+          <linearGradient id="gRed" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#d92b3f"/>
+            <stop offset="1" stop-color="#f4606f"/>
+          </linearGradient>
+          <linearGradient id="gBlue" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#2e9fd4"/>
+            <stop offset="1" stop-color="#79d3f7"/>
+          </linearGradient>
+          <linearGradient id="gYellow" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#e8b30c"/>
+            <stop offset="1" stop-color="#f9d95a"/>
+          </linearGradient>
+        </defs>
+        <!-- ступеньки поднимаются по очереди: 3 → 2 → 1 (номер едет со своей ступенькой) -->
+        <g class="step step-3">
+          <rect x="4.2" y="14.6" width="4.6" height="5.8" rx="1.2" fill="url(#gYellow)"/>
+          <text x="6.5" y="18.2" fill="#fff" font-family="Arial, sans-serif" font-weight="bold" font-size="3.2" text-anchor="middle">3</text>
+        </g>
+        <g class="step step-2">
+          <rect x="9.7" y="10.4" width="4.6" height="10" rx="1.2" fill="url(#gBlue)"/>
+          <text x="12" y="14" fill="#fff" font-family="Arial, sans-serif" font-weight="bold" font-size="3.2" text-anchor="middle">2</text>
+        </g>
+        <g class="step step-1">
+          <rect x="15.2" y="6.2" width="4.6" height="14.2" rx="1.2" fill="url(#gRed)"/>
+          <text x="17.5" y="9.8" fill="#fff" font-family="Arial, sans-serif" font-weight="bold" font-size="3.2" text-anchor="middle">1</text>
+        </g>
+        <!-- общее основание -->
+        <rect x="2.6" y="20.4" width="18.8" height="2.2" rx="1.1" fill="#c9c9ce"/>
+      </svg>
+      <div class="particle-layer"></div>
+    </button>
+
+    <!-- ===== Страница рейтинга ===== -->
+    <div class="page-rating" id="ratingPage">
+      <div class="rating-header">
+        <button class="back-btn" id="backBtn" aria-label="Назад">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#c9356b" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 5l-7 7 7 7"/>
+          </svg>
+        </button>
+        <div class="rating-title">Рейтинг</div>
+      </div>
+
+      <div class="rating-podium-wrap">
+        <svg class="podium rating-podium" viewBox="0 0 24 24">
+          <g class="step step-3">
+            <rect x="4.2" y="14.6" width="4.6" height="5.8" rx="1.2" fill="url(#gYellow)"/>
+            <text x="6.5" y="18.2" fill="#fff" font-family="Arial, sans-serif" font-weight="bold" font-size="3.2" text-anchor="middle">3</text>
+          </g>
+          <g class="step step-2">
+            <rect x="9.7" y="10.4" width="4.6" height="10" rx="1.2" fill="url(#gBlue)"/>
+            <text x="12" y="14" fill="#fff" font-family="Arial, sans-serif" font-weight="bold" font-size="3.2" text-anchor="middle">2</text>
+          </g>
+          <g class="step step-1">
+            <rect x="15.2" y="6.2" width="4.6" height="14.2" rx="1.2" fill="url(#gRed)"/>
+            <text x="17.5" y="9.8" fill="#fff" font-family="Arial, sans-serif" font-weight="bold" font-size="3.2" text-anchor="middle">1</text>
+          </g>
+          <rect x="2.6" y="20.4" width="18.8" height="2.2" rx="1.1" fill="#c9c9ce"/>
+        </svg>
+      </div>
+
+      <div class="rating-list" id="ratingList"></div>
+    </div>
+
+    <!-- ===== Страница настроек (выезжает слева направо) ===== -->
+    <div class="page-settings" id="settingsPage">
+      <div class="rating-header">
+        <button class="back-btn" id="settingsBackBtn" aria-label="Назад">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#c9356b" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 5l-7 7 7 7"/>
+          </svg>
+        </button>
+        <div class="rating-title">Настройки</div>
+      </div>
+
+      <div class="settings-list">
+        <!-- Музыка: ползунок громкости + цифра процентов (0% = выключено) -->
+        <div class="set-block" style="--i:0">
+          <span class="set-name">Громкость музыки</span>
+          <input type="range" class="range" id="musicVol" min="0" max="100" value="35" aria-label="Громкость музыки">
+          <span class="vol-num" id="musicVolNum">35%</span>
+        </div>
+
+        <!-- Звуки: ползунок громкости + цифра процентов (0% = выключено) -->
+        <div class="set-block" style="--i:1">
+          <span class="set-name">Громкость звуков</span>
+          <input type="range" class="range" id="soundVol" min="0" max="100" value="80" aria-label="Громкость звуков">
+          <span class="vol-num" id="soundVolNum">80%</span>
+        </div>
+
+        <!-- Видео вставки: галочка — показывать или нет -->
+        <div class="set-block" style="--i:2">
+          <span class="set-name">Видео вставки</span>
+          <input type="checkbox" class="check push" id="videoToggle" checked aria-label="Показывать видео вставки">
+        </div>
+      </div>
+    </div>
+
+    <!-- Кнопка настроек: шестерёнка (левый верхний угол) -->
+    <button id="settingsBtn" type="button" aria-label="Настройки">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+      </svg>
+    </button>
+
+    <!-- Правый верхний угол: таймер голосования + сброс под ним -->
+    <div class="top-right">
+      <button id="voteTimer" type="button" aria-label="Статус голосования">
+        <!-- синяя подсказка «!»: опыт зачитывается -->
+        <svg class="ico-hint" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="11" fill="#1e88e5"/>
+          <path d="M12 6.2v7" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"/>
+          <circle cx="12" cy="16.8" r="1.8" fill="#ffffff"/>
+        </svg>
+        <!-- жёлтые часы: идёт отсчёт 24 часов -->
+        <svg class="ico-clock" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="11" fill="#ffd60a"/>
+          <circle cx="12" cy="12" r="7.2" fill="none" stroke="#ffffff" stroke-width="2"/>
+          <path d="M12 8.2v4l2.8 1.8" stroke="#ffffff" stroke-width="2" stroke-linecap="round" fill="none"/>
+        </svg>
+        <!-- зелёные часы: новый цикл, снова можно голосовать -->
+        <svg class="ico-green" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="11" fill="#2ecc40"/>
+          <circle cx="12" cy="12" r="7.2" fill="none" stroke="#ffffff" stroke-width="2"/>
+          <path d="M12 8.2v4l2.8 1.8" stroke="#ffffff" stroke-width="2" stroke-linecap="round" fill="none"/>
+        </svg>
+      </button>
+
+      <!-- ВРЕМЕННАЯ кнопка: сброс сессии (чистит оценки и колоду) -->
+      <button id="resetSession" type="button">Сброс</button>
+
+      <!-- Подсказка по клику на часы: закрывается крестиком,
+           повторным кликом по кнопке или кликом мимо -->
+      <div class="timer-popup" id="timerPopup" hidden>
+        <button class="tp-close" id="tpClose" type="button" aria-label="Закрыть">×</button>
+        <p class="tp-text" id="tpText"></p>
+        <div class="tp-timer" id="tpTimer" hidden>00:00:00</div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+  const phone = document.querySelector('.phone');
+  const photo = document.getElementById('photo');
+  const namePlate = document.getElementById('namePlate');
+  const photoFrame = document.getElementById('photoFrame');
+  const rewardVideo = document.getElementById('rewardVideo');
+  const likeBtn = document.getElementById('like');
+  const dislikeBtn = document.getElementById('dislike');
+  const skipBtn = document.getElementById('skipBtn');
+
+  /* ===== Звуки ===== */
+  // клик по красному сердечку
+  const likeSound = new Audio('sounds/like-click.mp3');
+  likeSound.preload = 'auto';
+
+  // клик по разбитому сердцу
+  const dislikeSound = new Audio('sounds/dislike-click.mp3');
+  dislikeSound.preload = 'auto';
+
+  // запустить звук с начала; если браузер не разрешил — молча пропускаем
+  function playSound(audio) {
+    if (typeof settings !== 'undefined' && settings.soundVol === 0) return;
+    try {
+      // сброс возможен только когда файл уже прочитан; главное —
+      // чтобы эта строка никак не могла помешать самому play()
+      if (audio.readyState >= 1) audio.currentTime = 0;
+    } catch (_) {}
+    const p = audio.play();
+    if (p && p.catch) p.catch(() => {});
+  }
+
+  /* ===== СПИСОК КАРТОЧЕК =====
+     Пока часть карточек — заглушки с описанием природы (горы, река и т.д.).
+     У каждой карточки СВОИ видео-награды: «доброе» — за сердечко,
+     «не доброе» — за разбитое сердце (video/like-<id>.mp4 и
+     video/dislike-<id>.mp4). Реальные — у Сторожука и Выхристюка,
+     у остальных — цветные заглушки: положи свои файлы с теми же
+     именами, и они подхватятся сами. */
+  const vids = (id) => ({
+    like: [`video/like-${id}.mp4`],
+    dislike: [`video/dislike-${id}.mp4`],
+  });
+
+  const cards = [
+    { id: 'storozhuk', src: 'photo/storozhuk.jpg', name: 'Сторожук', videos: vids('storozhuk') },
+    { id: 'mountains', src: 'https://picsum.photos/id/1018/400/400', name: 'Горы', videos: vids('mountains') },
+    { id: 'river',     src: 'https://picsum.photos/id/1015/400/400', name: 'Река в горах', videos: vids('river') },
+    { id: 'canyon',    src: 'https://picsum.photos/id/1016/400/400', name: 'Каньон', videos: vids('canyon') },
+    { id: 'vyhristyuk', src: 'photo/vyhristyuk.jpg', name: 'Выхристюк', videos: vids('vyhristyuk') },
+    { id: 'sunset',    src: 'https://picsum.photos/id/1036/400/400', name: 'Закат в горах', videos: vids('sunset') },
+  ];
+
+  /* ===== Очки и «журнал» пользователя =====
+     Всё хранится в localStorage браузера:
+     • scores — очки рейтинга каждого фото
+       (сердечко/свайп влево +1, разбитое сердечко/свайп вправо −1);
+     • rated — кого этот пользователь уже оценивал.
+     Очки начисляются ТОЛЬКО за первую оценку каждого преподавателя:
+     повторные проходы не меняют рейтинг, какой бы стороной
+     человек ни свайпал — накрутить топ нельзя. */
+  const STORE_KEY = 'likeApp.v1';
+  // ТЕСТ: цикл 10 секунд (для проверки; потом вернуть 24 часа:
+  // const CYCLE_MS = 24 * 60 * 60 * 1000;)
+  const CYCLE_MS = 10 * 1000;
+
+  function loadState() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+      if (saved && typeof saved === 'object') {
+        return {
+          scores: saved.scores && typeof saved.scores === 'object' ? saved.scores : {},
+          rated: Array.isArray(saved.rated) ? saved.rated : [],
+          cycleEnd: Number.isFinite(saved.cycleEnd) ? saved.cycleEnd : null,
+          cycles: Number.isFinite(saved.cycles) ? saved.cycles : 0,
+        };
+      }
+    } catch (_) {}
+    return { scores: {}, rated: [], cycleEnd: null, cycles: 0 };
+  }
+
+  let state = loadState();
+
+  // сохранения, сделанные ДО введения 24-часового цикла: если все
+  // карточки оценены, а таймер не запущен — открываем новый цикл,
+  // чтобы очки снова зачитывались (в новом коде такое состояние
+  // невозможно: оценил всех — таймер сразу запускается)
+  if (!state.cycleEnd && state.rated.length >= cards.length) {
+    state.rated = [];
+    saveState();
+  }
+
+  function saveState() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (_) {}
+  }
+
+  // если 24 часа (в тесте — 10 секунд) истекли — открываем новый цикл:
+  // очки снова зачитываются, значок становится зелёными часами,
+  // а колода пересобирается в новый случайный порядок
+  let pendingCycleReshuffle = false; // цикл кончился во время видео — пересобираем при смене карточки
+
+  function refreshCycle() {
+    if (state.cycleEnd && Date.now() >= state.cycleEnd) {
+      state.cycleEnd = null;
+      state.rated = [];
+      state.cycles = (state.cycles || 0) + 1;
+      saveState();
+      reshuffleForNewCycle();
+    }
+  }
+
+  // начислить/списать очки только за ПЕРВУЮ оценку карточки в цикле
+  function applyVote(cardId, delta) {
+    refreshCycle();
+    if (state.rated.includes(cardId)) return; // цикл идёт — очки заморожены
+    state.scores[cardId] = (state.scores[cardId] || 0) + delta;
+    state.rated.push(cardId);
+    // оценили всех — запускаем 24-часовой таймер до нового голосования
+    if (state.rated.length >= cards.length) state.cycleEnd = Date.now() + CYCLE_MS;
+    saveState();
+  }
+
+  /* ===== Колода =====
+     Бесконечная: все карточки всегда в игре, а когда круг пройден,
+     колода пересобирается заново в случайном порядке. Порядок и место,
+     где остановились, СОХРАНЯЮТСЯ: после перезагрузки страницы лента
+     продолжается с той же карточки и в том же порядке. Новый случайный
+     порядок появляется после «Сброса» сессии и в момент, когда кончается
+     24-часовой цикл (истекают жёлтые часы). */
+  function shuffledDeck() {
+    const d = [...cards];
+    for (let i = d.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [d[i], d[j]] = [d[j], d[i]];
+    }
+    return d;
+  }
+
+  const DECK_KEY = 'likeApp.deck.v1';
+
+  // восстановить сохранённую колоду или собрать новую
+  function loadDeck() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(DECK_KEY) || 'null');
+      if (saved && Array.isArray(saved.order)) {
+        const byId = new Map(cards.map(c => [c.id, c]));
+        const restored = saved.order.map(id => byId.get(id)).filter(Boolean);
+        if (restored.length === cards.length) {
+          const pos = Math.min(Math.max(0, saved.pos | 0), cards.length - 1);
+          return { deck: restored, pos };
+        }
+      }
+    } catch (_) {}
+    return { deck: shuffledDeck(), pos: 0 };
+  }
+
+  function saveDeck() {
+    try {
+      localStorage.setItem(DECK_KEY, JSON.stringify({ order: deck.map(c => c.id), pos: deckPos }));
+    } catch (_) {}
+  }
+
+  const loaded = loadDeck();
+  let deck = loaded.deck;
+  let deckPos = loaded.pos;
+  // порядок сохраняется с самого первого открытия страницы:
+  // обновление без единого голоса не меняет его
+  saveDeck();
+
+  let busy = false;
+  let lastVoteAt = 0; // момент последнего учтённого выбора — защита от двойного клика
+
+  // новый цикл — новая случайная колода с первой карточки.
+  // Новый порядок сохраняется: после обновления страницы лента
+  // продолжается в нём же. Если в этот момент играет видео-награда,
+  // пересборка откладывается до смены карточки (pendingCycleReshuffle).
+  function reshuffleForNewCycle() {
+    if (busy) { pendingCycleReshuffle = true; return; }
+    const justShown = deck[deckPos];
+    deck = shuffledDeck();
+    deckPos = 0;
+    // первая карточка нового порядка не должна совпадать с той,
+    // что сейчас на экране, иначе покажется, что карточка не сменилась
+    if (deck.length > 1 && deck[0].id === justShown.id) {
+      [deck[0], deck[1]] = [deck[1], deck[0]];
+    }
+    saveDeck();
+
+    // мягкая смена: текущая карточка сдувается, первая из нового порядка вырастает
+    photoFrame.classList.remove('slide-out-left', 'slide-out-right', 'pop-in', 'shrink-out');
+    photoFrame.style.transition = 'none';
+    photoFrame.style.transform = '';
+    void photoFrame.offsetWidth;
+    photoFrame.classList.add('shrink-out');
+    setTimeout(() => {
+      photoFrame.classList.remove('shrink-out');
+      void photoFrame.offsetWidth;
+      photoFrame.classList.add('pop-in');
+      showCurrentCard();
+    }, SHRINK_MS);
+  }
+
+  function showCurrentCard() {
+    photo.src = deck[deckPos].src;
+    namePlate.textContent = deck[deckPos].name;
+  }
+
+  /* ===== Награда-видео =====
+     После оценки карточка упруго отскакивает в центр, как от
+     невидимой стенки: после свайпа — из оттянутого положения,
+     после нажатия кнопки — «отпрыгивает» на месте. На месте фото
+     проигрывается видео: доброе — за сердечко, не доброе — за
+     разбитое сердце. Когда видео доиграло, карточка плавно сдувается,
+     следующая скрытно подставляется и вырастает на её месте. */
+  const START_WATCHDOG_MS = 4000; // если видео так и не стартовало — идём дальше
+  const SHRINK_MS = 420;          // сколько карточка сдувается перед подменой
+
+  let rewardTimer = null;
+  let rewardSeq = 0; // номер текущей награды: события старого видео игнорируем
+
+  function playReward(card, reaction) {
+    if (busy) return;
+    busy = true;
+    timerPopup.hidden = true; // подсказка убирается — пусть не мешает «СКИП» и видео
+
+    const frame = photoFrame;
+    const seq = ++rewardSeq;
+
+    // карточка уходит в сторону выбора и упруго отскакивает в центр,
+    // как от невидимой стенки — и после свайпа, и после кнопки
+    if (frame.style.transform) {
+      // после свайпа карточка уже оттянута — сразу пружинит обратно
+      frame.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)';
+      void frame.offsetWidth;
+      frame.style.transform = '';
+    } else {
+      // после кнопки: карточка дёргается в сторону выбора...
+      const dir = reaction === 'like' ? -1 : 1; // сердечко — влево, разбитое сердце — вправо
+      frame.style.transition = 'transform 0.14s ease-out';
+      void frame.offsetWidth;
+      frame.style.transform = `translateX(${dir * 52}px) rotate(${dir * 2.6}deg)`;
+      // ...и через мгновение отскакивает в центр, как после свайпа
+      setTimeout(() => {
+        if (seq !== rewardSeq) return;
+        frame.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)';
+        frame.style.transform = '';
+      }, 150);
+    }
+
+    // видео-награды выключены в настройках — после отскока
+    // сразу сдувается карточка и вырастает следующая
+    if (!settings.videosOn) {
+      setTimeout(() => { if (seq === rewardSeq) finishReward(); }, 650);
+      return;
+    }
+
+    // на время видео-награды глушим фоновую музыку, после — вернём
+    if (musicRunning) {
+      bgMusic.pause();
+      musicRunning = false;
+      musicPausedForVideo = true;
+    }
+
+    // запускаем СОБСТВЕННОЕ видео этой карточки; показываем его поверх фото,
+    // только когда оно реально начало играть (пока грузится — видно само фото)
+    const pool = card.videos[reaction];
+    rewardVideo.src = pool[Math.floor(Math.random() * pool.length)];
+    rewardVideo.onplaying = () => {
+      if (seq !== rewardSeq) return;
+      clearTimeout(rewardTimer);
+      rewardVideo.classList.add('showing');
+      skipBtn.classList.add('show'); // видео пошло — сразу выплывает кнопка «СКИП»
+    };
+    rewardVideo.onended = () => { if (seq === rewardSeq) finishReward(); };
+    rewardVideo.onerror = () => { if (seq === rewardSeq) finishReward(); };
+
+    // пробуем включить СО ЗВУКОМ: клик/свайп — это жест пользователя,
+    // поэтому браузер обычно разрешает звук; не разрешил — играем без звука
+    rewardVideo.muted = false;
+    rewardVideo.volume = 1;
+    const playing = rewardVideo.play();
+    if (playing && playing.catch) {
+      playing.catch(() => {
+        if (seq !== rewardSeq) return;
+        rewardVideo.muted = true;
+        const silent = rewardVideo.play();
+        if (silent && silent.catch) silent.catch(() => {});
+      });
+    }
+
+    // страховка: если видео так и не начало играть — идём дальше
+    clearTimeout(rewardTimer);
+    rewardTimer = setTimeout(finishReward, START_WATCHDOG_MS);
+  }
+
+  // видео доиграло (или его пропустили) — карточка плавно сдувается,
+  // следующая скрытно подставляется и вырастает на том же месте
+  function finishReward() {
+    if (!busy) return;
+    rewardSeq += 1; // события этого видео больше не действуют
+    clearTimeout(rewardTimer);
+    rewardTimer = null;
+    skipBtn.classList.remove('show');
+
+    // видео убираем МГНОВЕННО, как только оно доиграло (или его пропустили):
+    // доигранный кадр браузер может заменить тёмной подложкой — под спрятанным
+    // видео снова видно само фото, никакого чёрного экрана
+    rewardVideo.classList.remove('showing');
+    rewardVideo.pause();
+
+    // фоновая музыка включается обратно
+    if (musicPausedForVideo) {
+      musicPausedForVideo = false;
+      if (settings.musicVol > 0) applyMusic();
+    }
+
+    // ставим карточку ровно в центр (вдруг видео оборвалось на
+    // середине отскока) и сдуваем её на месте
+    photoFrame.classList.remove('slide-out-left', 'slide-out-right', 'pop-in', 'shrink-out');
+    photoFrame.style.transition = 'none';
+    photoFrame.style.transform = '';
+    void photoFrame.offsetWidth;
+    photoFrame.classList.add('shrink-out');
+
+    const swap = () => {
+      if (pendingCycleReshuffle) {
+        // пока шло видео, закончился цикл: пересобираем колоду в новый
+        // порядок (он сохраняется) и начинаем с первой карточки
+        pendingCycleReshuffle = false;
+        const justShown = deck[deckPos];
+        deck = shuffledDeck();
+        deckPos = 0;
+        if (deck.length > 1 && deck[0].id === justShown.id) {
+          [deck[0], deck[1]] = [deck[1], deck[0]];
+        }
+        saveDeck();
+      } else {
+        deckPos += 1;
+        saveDeck(); // позиция и порядок колоды сохраняются после каждой карточки
+
+        // круг пройден — пересобираем колоду: карточки не кончаются никогда
+        if (deckPos >= deck.length) {
+          const justShown = deck[deckPos - 1];
+          deck = shuffledDeck();
+          deckPos = 0;
+          // только что оценённая карточка не должна прийти первой,
+          // иначе покажется, что карточка не сменилась
+          if (deck.length > 1 && deck[0].id === justShown.id) {
+            [deck[0], deck[1]] = [deck[1], deck[0]];
+          }
+          saveDeck();
+        }
+      }
+
+      // новая карточка вырастает на месте старой — подмены не видно
+      photoFrame.classList.remove('shrink-out');
+      void photoFrame.offsetWidth;
+      photoFrame.classList.add('pop-in');
+
+      showCurrentCard();
+      // маленькая пауза перед следующим выбором — страховка от двойного клика
+      setTimeout(() => { busy = false; }, 350);
+    };
+
+    setTimeout(swap, SHRINK_MS); // ждём конца сдувания
+  }
+
+  // «СКИП»: прерываем видео-награду и сразу листаем следующую карточку
+  skipBtn.addEventListener('click', () => {
+    if (!busy) return; // видео не играет — пропускать нечего
+    burst(skipBtn, ['#9b9b9b', '#c4c4c4', '#79d3f7']);
+    finishReward();
+  });
+
+  /* вспышка частиц из кнопки (кружочки разных цветов) */
+  function burst(btn, colors) {
+    const layer = btn.querySelector('.particle-layer');
+    const count = 10;
+
+    for (let i = 0; i < count; i++) {
+      const p = document.createElement('span');
+      const size = 5 + Math.round(Math.random() * 4);
+      p.style.position = 'absolute';
+      p.style.top = '50%';
+      p.style.left = '50%';
+      p.style.width = size + 'px';
+      p.style.height = size + 'px';
+      p.style.borderRadius = '50%';
+      p.style.background = colors[i % colors.length];
+      p.style.transform = 'translate(-50%, -50%)';
+      layer.appendChild(p);
+
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.4;
+      const dist = 34 + Math.random() * 22;
+      const dx = Math.round(Math.cos(angle) * dist);
+      const dy = Math.round(Math.sin(angle) * dist);
+
+      const anim = p.animate(
+        [
+          { transform: 'translate(-50%, -50%) scale(1)', opacity: 1 },
+          { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.3)`, opacity: 0 }
+        ],
+        { duration: 550 + Math.round(Math.random() * 150), easing: 'cubic-bezier(0.2, 0.8, 0.3, 1)' }
+      );
+      anim.onfinish = () => p.remove();
+    }
+  }
+
+  /* пружинистый прыжок кнопки */
+  function popButton(btn) {
+    btn.classList.remove('pop');
+    void btn.offsetWidth;
+    btn.classList.add('pop');
+    btn.addEventListener('animationend', function onPop(e) {
+      if (e.target !== btn) return;
+      btn.removeEventListener('animationend', onPop);
+      btn.classList.remove('pop');
+    });
+  }
+
+  likeBtn.addEventListener('click', () => {
+    if (busy) return;                    // идёт видео-награда — ждём
+    if (!deck.length || deckPos >= deck.length) return; // карточек больше нет
+    if (Date.now() - lastVoteAt < 500) return;          // защита от двойного клика
+    lastVoteAt = Date.now();
+    const card = deck[deckPos];        // карточка на экране — голос и награда за неё
+    playSound(likeSound);              // звук нажатия на сердечко
+    popButton(likeBtn);
+    burst(likeBtn, ['#e0457e', '#e08a2f']);
+    applyVote(card.id, +1);            // сердечко: +1 к опыту рейтинга
+    playReward(card, 'like');
+  });
+
+  let dislikeTimer = null;
+
+  // по клику анимация «попытки склеиться» не сбрасывается с начала,
+  // а перепрыгивает на фазу «половинки сомкнуты» (32% цикла) и продолжается
+  function mendSnap() {
+    dislikeBtn.querySelectorAll('.piece').forEach(p => {
+      const name = p.classList.contains('left') ? 'mendLeft' : 'mendRight';
+      p.style.animation = 'none';
+      void p.offsetWidth;
+      p.style.animation = `${name} 3.6s ease-in-out -1.15s infinite`;
+    });
+  }
+
+  dislikeBtn.addEventListener('click', () => {
+    if (busy) return;                    // идёт видео-награда — ждём
+    if (!deck.length || deckPos >= deck.length) return; // карточек больше нет
+    if (Date.now() - lastVoteAt < 500) return;          // защита от двойного клика
+    lastVoteAt = Date.now();
+    const card = deck[deckPos];        // карточка на экране — голос и награда за неё
+    playSound(dislikeSound);           // звук нажатия на разбитое сердце
+    popButton(dislikeBtn);
+    burst(dislikeBtn, ['#9b9b9b', '#c4c4c4']);
+    mendSnap();
+    applyVote(card.id, -1);            // разбитое сердце: −1 опыта рейтинга
+    playReward(card, 'dislike');
+  });
+
+  // кубок рейтинга: открывает страницу рейтинга
+  const ratingBtn = document.getElementById('rating');
+  ratingBtn.addEventListener('click', () => {
+    popButton(ratingBtn);
+    burst(ratingBtn, ['#2e9fd4', '#79d3f7', '#c9ecfb']);
+    openRating();
+  });
+
+  /* ===== РЕЙТИНГ (вторая страница) =====
+     Список строится из тех же карточек, что и свайпы. Опыт каждого
+     фото подтягивается из хранилища и меняется от оценок:
+     сердечко/свайп влево +1, разбитое сердечко/свайп вправо −1.
+     Сверху — те, у кого очков больше, далее по убыванию. */
+  const avatarColors = [
+    'linear-gradient(135deg, #ec6f9c, #c9356b)',
+    'linear-gradient(135deg, #79d3f7, #2e9fd4)',
+    'linear-gradient(135deg, #f9d95a, #e8b30c)',
+    'linear-gradient(135deg, #b6b6bb, #8a8a8f)',
+    'linear-gradient(135deg, #f4606f, #d92b3f)',
+  ];
+
+  function buildRating() {
+    const list = document.getElementById('ratingList');
+    list.innerHTML = '';
+
+    // участники рейтинга = все карточки, опыт подтягивается из хранилища;
+    // сортировка по убыванию очков: лидеры сверху
+    const sorted = cards
+      .map((c, i) => ({ ...c, i, score: state.scores[c.id] || 0 }))
+      .sort((a, b) => b.score - a.score);
+
+    sorted.forEach((c, placeIdx) => {
+      const place = placeIdx + 1;
+      const placeClass = place <= 3 ? ' p' + place : '';
+
+      // буква-запасной вариант осталась под фото — если картинка не загрузится
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.setProperty('--i', placeIdx);
+      row.innerHTML = `
+        <div class="place${placeClass}">${place}</div>
+        <div class="avatar" style="background:${avatarColors[c.i % avatarColors.length]}">
+          ${c.name[0]}
+          <img src="${c.src}" style="position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover" alt="" onerror="this.remove()">
+        </div>
+        <div class="rname">${c.name}</div>
+        <div class="score">${c.score}</div>`;
+      list.appendChild(row);
+    });
+  }
+
+  const ratingPage = document.getElementById('ratingPage');
+
+  function openRating() {
+    buildRating(); // пересобираем, чтобы строки красиво влетели заново
+    ratingPage.classList.add('open');
+  }
+
+  document.getElementById('backBtn').addEventListener('click', () => {
+    ratingPage.classList.remove('open');
+  });
+
+  // ВРЕМЕННАЯ кнопка сброса: чистит storage и начинает сессию заново
+  document.getElementById('resetSession').addEventListener('click', () => {
+    try {
+      localStorage.removeItem(STORE_KEY);   // оценки
+      localStorage.removeItem(DECK_KEY);    // колода — будет новый рандом
+      localStorage.removeItem('likeApp.badge.v1'); // память значка-подсказки
+    } catch (_) {}
+    location.reload();
+  });
+
+  /* ===== ТАЙМЕР ГОЛОСОВАНИЯ (правый верхний угол) =====
+     Зелёный «!» — опыт зачитывается; жёлтые часы — идёт отсчёт.
+     Клик открывает подсказку: она появляется ОДИН раз и сама
+     исчезает через пару секунд. Повторный клик закрывает сразу. */
+  const voteTimer = document.getElementById('voteTimer');
+  const timerPopup = document.getElementById('timerPopup');
+  const tpText = document.getElementById('tpText');
+  const tpTimer = document.getElementById('tpTimer');
+  const tpClose = document.getElementById('tpClose');
+
+  /* память значка: если пользователь закрыл его (крестик/клик/действие) —
+     после обновления страницы значок НЕ появляется снова; оживает только
+     с новым циклом (жёлтые/зелёные часы) */
+  const BADGE_KEY = 'likeApp.badge.v1';
+
+  function dismissBadge() {
+    voteTimer.classList.add('gone');
+    try { localStorage.setItem(BADGE_KEY, '1'); } catch (_) {}
+  }
+
+  function reviveBadge() {
+    voteTimer.classList.remove('gone');
+    try { localStorage.removeItem(BADGE_KEY); } catch (_) {}
+  }
+
+  // крестик на подсказке — закрывает её; в зелёном состоянии
+  // вместе с ней пропадает и сам синий значок (с памятью)
+  tpClose.addEventListener('click', () => {
+    timerPopup.hidden = true;
+    clearTimeout(popupHideTimer);
+    if (!state.cycleEnd) dismissBadge();
+  });
+
+  // 07:43:12 — обратный отсчёт внутри подсказки
+  function fmtClock(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = String(Math.floor(s / 3600)).padStart(2, '0');
+    const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    return h + ':' + m + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  function updateTimerUI() {
+    refreshCycle();
+    const active = !!state.cycleEnd;                        // жёлтые часы — отсчёт
+    const greenClock = !active && (state.cycles || 0) > 0;  // зелёные часы — новый цикл
+    voteTimer.classList.toggle('active', active);
+    voteTimer.classList.toggle('green', greenClock);
+    voteTimer.classList.toggle('free', !active && !greenClock);
+    // начался новый цикл (жёлтые часы) — значок возвращается,
+    // даже если был скрыт, и память сбрасывается
+    if (active) reviveBadge();
+    // пока подсказка открыта — тикает отсчёт в ней же
+    if (!timerPopup.hidden && state.cycleEnd) {
+      tpTimer.textContent = fmtClock(state.cycleEnd - Date.now());
+    }
+  }
+
+  let popupHideTimer = null;
+
+  voteTimer.addEventListener('click', () => {
+    refreshCycle();
+    // клик по значку закрывает подсказку — «функция крестика»;
+    // в зелёном состоянии значок пропадает вместе с ней (с памятью)
+    if (!timerPopup.hidden) {
+      timerPopup.hidden = true;
+      clearTimeout(popupHideTimer);
+      if (!state.cycleEnd) dismissBadge();
+      return;
+    }
+    if (state.cycleEnd) {
+      // жёлтые часы: подсказка с отсчётом появляется один раз и сама исчезает
+      tpText.textContent = 'Ваш голос временно не начисляет опыт в рейтинг';
+      tpTimer.textContent = fmtClock(state.cycleEnd - Date.now());
+      tpTimer.hidden = false;
+      timerPopup.hidden = false;
+      clearTimeout(popupHideTimer);
+      popupHideTimer = setTimeout(() => { timerPopup.hidden = true; }, 3000);
+    } else {
+      // синий «!»: показывает текст; после завершённого цикла — «снова»
+      tpText.textContent = Object.keys(state.scores).length > 0
+        ? 'Ваш голос снова начисляет опыт в рейтинг'
+        : 'Ваш голос начисляет опыт в рейтинг';
+      tpTimer.hidden = true;
+      timerPopup.hidden = false;
+    }
+  });
+
+  // ЛЮБОЕ действие на странице (свайп, клик, нажатие) после открытия
+  // подсказки — выполняет функцию крестика: подсказка закрывается,
+  // а в зелёном состоянии пропадает и сам синий значок (до нового цикла)
+  document.addEventListener('pointerdown', (e) => {
+    if (timerPopup.hidden) return;
+    if (timerPopup.contains(e.target) || voteTimer.contains(e.target)) return;
+    timerPopup.hidden = true;
+    clearTimeout(popupHideTimer);
+    if (!state.cycleEnd) dismissBadge();
+  });
+
+  // старт: восстанавливаем память значка (был закрыт — не показываем)
+  try {
+    if (localStorage.getItem(BADGE_KEY) && !state.cycleEnd) {
+      voteTimer.classList.add('gone');
+    }
+  } catch (_) {}
+
+  updateTimerUI();
+  // подсказка при заходе НЕ показывается: синий «!» сам радостно
+  // подпрыгивает, приглашая нажать — клик открывает текст
+  setInterval(updateTimerUI, 1000);
+
+  /* ===== НАСТРОЙКИ (шестерёнка слева сверху) =====
+     Музыка фона, звуки нажатий и видео-награды.
+     Сохраняются в localStorage отдельно от оценок. */
+  const SET_KEY = 'likeApp.settings.v1';
+
+  function loadSettings() {
+    try {
+      const s = JSON.parse(localStorage.getItem(SET_KEY) || 'null');
+      if (s && typeof s === 'object') {
+        const vol = (v, d, off) => {
+          if (typeof v === 'number' && v >= 0 && v <= 100) return Math.round(v);
+          return off ? 0 : d; // в старых сохранениях были флажки вкл/выкл
+        };
+        return {
+          musicVol: vol(s.musicVol, 35, s.musicOn === false),
+          soundVol: vol(s.soundVol, 80, s.soundOn === false),
+          videosOn: s.videosOn !== false,
+        };
+      }
+    } catch (_) {}
+    return { musicVol: 35, soundVol: 80, videosOn: true };
+  }
+
+  let settings = loadSettings();
+
+  function saveSettings() {
+    try { localStorage.setItem(SET_KEY, JSON.stringify(settings)); } catch (_) {}
+  }
+
+  // фоновая музыка: браузеры не дают запускать звук до первого жеста
+  // пользователя, поэтому ловим первое касание страницы и стартуем
+  const bgMusic = new Audio('sounds/bg-music.mp3');
+  bgMusic.loop = true;
+  bgMusic.preload = 'auto';
+  let musicRunning = false;
+  let musicPausedForVideo = false; // музыка заглушена на время видео-награды
+
+  function applyMusic() {
+    const on = settings.musicVol > 0;
+    bgMusic.volume = settings.musicVol / 100;
+    if (on) {
+      const p = bgMusic.play();
+      if (p && p.catch) p.catch(() => {});
+      musicRunning = true;
+    } else {
+      bgMusic.pause();
+      musicRunning = false;
+    }
+  }
+
+  document.addEventListener('pointerdown', function startMusicOnFirstTouch() {
+    document.removeEventListener('pointerdown', startMusicOnFirstTouch);
+    if (settings.musicVol > 0 && !musicRunning) applyMusic();
+  });
+
+  function applySoundSettings() {
+    const v = settings.soundVol / 100;
+    likeSound.volume = v;
+    dislikeSound.volume = v;
+  }
+
+  const settingsBtn = document.getElementById('settingsBtn');
+  const settingsPage = document.getElementById('settingsPage');
+  const musicVol = document.getElementById('musicVol');
+  const musicVolNum = document.getElementById('musicVolNum');
+  const soundVol = document.getElementById('soundVol');
+  const soundVolNum = document.getElementById('soundVolNum');
+  const videoToggle = document.getElementById('videoToggle');
+
+  // шестерёнка: крутанулась — и страница выехала слева
+  settingsBtn.addEventListener('click', () => {
+    settingsBtn.classList.remove('spinning');
+    void settingsBtn.offsetWidth; // перезапуск анимации
+    settingsBtn.classList.add('spinning');
+    settingsPage.classList.add('open');
+  });
+
+  document.getElementById('settingsBackBtn').addEventListener('click', () => {
+    settingsPage.classList.remove('open');
+  });
+
+  // отражаем сохранённые настройки в элементах страницы
+  videoToggle.checked = settings.videosOn;
+  musicVol.value = settings.musicVol;
+  soundVol.value = settings.soundVol;
+
+  // заливка ползунка слева от ручки и цифра процентов рядом
+  function syncVolume(range, num) {
+    range.style.setProperty('--fill', range.value + '%');
+    num.textContent = range.value + '%';
+  }
+  syncVolume(musicVol, musicVolNum);
+  syncVolume(soundVol, soundVolNum);
+  applySoundSettings();
+
+  musicVol.addEventListener('input', () => {
+    settings.musicVol = +musicVol.value;
+    syncVolume(musicVol, musicVolNum);
+    saveSettings();
+    if (settings.musicVol > 0) {
+      bgMusic.volume = settings.musicVol / 100;
+      if (!musicRunning) {
+        const p = bgMusic.play();
+        if (p && p.catch) p.catch(() => {});
+        musicRunning = true;
+      }
+    } else {
+      bgMusic.pause();
+      musicRunning = false;
+    }
+  });
+
+  soundVol.addEventListener('input', () => {
+    settings.soundVol = +soundVol.value;
+    syncVolume(soundVol, soundVolNum);
+    saveSettings();
+    applySoundSettings();
+  });
+
+  videoToggle.addEventListener('change', () => {
+    settings.videosOn = videoToggle.checked;
+    saveSettings();
+  });
+
+  /* ===== Перетаскивание карточки мышью и пальцем =====
+     Достаточно один раз потянуть: как только карточка переведена за порог,
+     она сама улетает в сторону — тянуть до конца и «прицеливаться» не нужно.
+     Быстрый короткий флик тоже засчитывается. */
+  const frameEl = photoFrame; // именно рамка карточки: фото завёрнуто в .photo-clip
+  let drag = null;
+
+  // порог: карточку можно оттянуть прилично далеко (почти треть ширины) —
+  // и только потом она сама улетает
+  const swipeThreshold = () => Math.min(120, frameEl.offsetWidth * 0.3);
+
+  // общий сценарий: карточку перевели за порог — засчитываем выбор
+  // и показываем видео-награду
+  function commitSwipe(dx) {
+    drag = null;
+    likeBtn.style.transform = '';
+    dislikeBtn.style.transform = '';
+    frameEl.classList.remove('dragging');
+
+    if (busy) { frameEl.style.transform = ''; return; }
+    if (!deck.length || deckPos >= deck.length) { frameEl.style.transform = ''; return; }
+    if (Date.now() - lastVoteAt < 500) { frameEl.style.transform = ''; return; }
+    lastVoteAt = Date.now();
+    const card = deck[deckPos]; // карточка на экране — голос и награда за неё
+
+    // сдвиг НЕ сбрасываем здесь: карточка пружинисто вернётся в центр
+    // из места, где палец (это делает playReward)
+
+    if (dx < 0) {
+      playSound(likeSound);            // звук нажатия на сердечко
+      popButton(likeBtn);
+      burst(likeBtn, ['#e0457e', '#e08a2f']);
+      applyVote(card.id, +1);          // сердечко: +1 к опыту рейтинга
+      playReward(card, 'like');
+    } else {
+      playSound(dislikeSound);         // звук нажатия на разбитое сердце
+      popButton(dislikeBtn);
+      burst(dislikeBtn, ['#9b9b9b', '#c4c4c4']);
+      mendSnap();
+      applyVote(card.id, -1);          // разбитое сердце: −1 опыта рейтинга
+      playReward(card, 'dislike');
+    }
+  }
+
+  frameEl.addEventListener('pointerdown', (e) => {
+    if (busy) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return; // только левая кнопка
+    drag = {
+      id: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      dx: 0,
+      vx: 0,
+      lastX: e.clientX,
+      lastT: performance.now(),
+      active: false
+    };
+    try { frameEl.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+
+  frameEl.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+
+    // ждём явного намерения потянуть именно в сторону
+    if (!drag.active) {
+      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
+        drag.active = true;
+        frameEl.classList.add('dragging');
+        frameEl.style.transition = 'none';
+      } else return;
+    }
+
+    // скорость движения — для засчёта короткого резкого флика
+    const now = performance.now();
+    const dt = now - drag.lastT;
+    if (dt > 0) {
+      drag.vx = 0.7 * drag.vx + 0.3 * ((e.clientX - drag.lastX) / dt);
+    }
+    drag.lastX = e.clientX;
+    drag.lastT = now;
+    drag.dx = dx;
+
+    // перевели за порог — карточка улетает сама, отпускать не обязательно
+    if (Math.abs(dx) >= swipeThreshold()) {
+      commitSwipe(dx);
+      return;
+    }
+
+    // карточка едет за пальцем с лёгким наклоном
+    frameEl.style.transform = `translateX(${dx}px) rotate(${dx * 0.05}deg)`;
+
+    // сердце с той стороны, куда тянем, увеличивается
+    const t = Math.min(Math.abs(dx) / swipeThreshold(), 1);
+    likeBtn.style.transform = dx < 0 ? `scale(${1 + t * 0.35})` : '';
+    dislikeBtn.style.transform = dx > 0 ? `scale(${1 + t * 0.35})` : '';
+  });
+
+  function endDrag(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const wasActive = drag.active;
+    const dx = drag.dx;
+    const vx = drag.vx;
+    drag = null;
+
+    likeBtn.style.transform = '';
+    dislikeBtn.style.transform = '';
+    frameEl.classList.remove('dragging');
+
+    if (!wasActive) return; // это был простой клик по карточке — ничего не делаем
+
+    // резкий короткий рывок тоже считается выбором
+    if (Math.abs(dx) > 20 && Math.abs(vx) > 0.6) {
+      commitSwipe(vx < 0 ? -1 : 1);
+    } else if (Math.abs(dx) >= swipeThreshold()) {
+      commitSwipe(dx);
+    } else {
+      // недотянули — пружиним обратно в центр
+      frameEl.style.transition = 'transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)';
+      frameEl.style.transform = '';
+    }
+  }
+
+  frameEl.addEventListener('pointerup', endDrag);
+  frameEl.addEventListener('pointercancel', endDrag);
+  // сбрасываем transition только по СОБСТВЕННОМУ переходу карточки:
+  // переходы детей (например, проявление видео) всплывают сюда и
+  // иначе сшибают пружинный отскок на середине — карточка «рвётся»
+  frameEl.addEventListener('transitionend', (e) => {
+    if (e.target !== frameEl || e.propertyName !== 'transform') return;
+    frameEl.style.transition = '';
+  });
+
+  // первая карточка
+  showCurrentCard();
+  // предзагрузка фото колоды, чтобы переключение было мгновенным
+  deck.forEach(c => { const im = new Image(); im.src = c.src; });
+
+  // предзагрузка видео-наград в кеш браузера: в момент отпрыгивания
+  // фото меняется на видео сразу, без паузы на загрузку
+  // (если видео выключены в настройках — трафик не тратим)
+  setTimeout(() => {
+    if (!settings.videosOn) return;
+    cards.flatMap(c => [...c.videos.like, ...c.videos.dislike]).forEach(src => {
+      const v = document.createElement('video');
+      v.muted = true;
+      v.preload = 'auto';
+      v.src = src;
+    });
+  }, 2500);
+</script>
+
+</body>
+</html>
